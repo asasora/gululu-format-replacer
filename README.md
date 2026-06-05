@@ -40,6 +40,17 @@
 - [ScriptCat](https://scriptcat.org/)
 
 然后点击下面的安装链接：
+[点击安装脚本](https://raw.githubusercontent.com/asasora/gululu-format-replacer/main/gululu-format-replacer.user.js)
 
-```text
-https://raw.githubusercontent.com/asasora/gululu-format-replacer/main/gululu-format-replacer.user.js
+## 使用方法
+
+1. 打开骨碌碌创作端。
+2. 点击页面右下角的 🔎 悬浮球。
+3. 左侧输入要查找的内容
+4. 将要替换的内容粘贴到右侧
+5. 点击下一项，跳转到查找到的内容，并选择替换。
+
+
+## 许可证
+
+MIT License
