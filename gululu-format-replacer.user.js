@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         骨碌碌创作端搜索替换工具
 // @namespace    https://github.com/asasora/gululu-format-replacer
-// @version      0.1.0
+// @version      0.1.1
 // @description  为骨碌碌创作端 ProseMirror 编辑器添加带格式搜索替换功能
 // @author       Kototsuki
 // @match        *://create.gululu.world/*
