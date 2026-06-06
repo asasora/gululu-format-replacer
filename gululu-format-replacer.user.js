@@ -3,7 +3,7 @@
 // @namespace    https://github.com/asasora/gululu-format-replacer
 // @version      0.1.0
 // @description  为骨碌碌创作端 ProseMirror 编辑器添加带格式搜索替换功能
-// @author       You
+// @author       Kototsuki
 // @match        *://create.gululu.world/*
 // @grant        none
 // @run-at       document-idle
@@ -258,6 +258,8 @@
     let currentIndex = -1;
     let matches = [];
     let lastSearchText = '';
+    // 替换文本发生变化后，下一次点击“下一处”应该跳到的新下标
+    let pendingNextIndexAfterReplace = null;
 
     function createBall() {
         if (ball) return ball;
@@ -1023,6 +1025,7 @@
 
         if (resetIndex || searchText !== lastSearchText) {
             currentIndex = -1;
+            pendingNextIndexAfterReplace = null;
         }
 
         lastSearchText = searchText;
@@ -1030,12 +1033,14 @@
 
         if (matches.length === 0) {
             currentIndex = -1;
+            pendingNextIndexAfterReplace = null;
         } else if (currentIndex >= matches.length) {
             currentIndex = matches.length - 1;
         }
 
         updateStatus();
     }
+
 
     function updateStatus() {
         if (!statusText) return;
@@ -1052,6 +1057,7 @@
 
         const current = currentIndex >= 0 ? currentIndex + 1 : 0;
         statusText.textContent = `找到 ${matches.length} 处，当前 ${current}/${matches.length}`;
+
     }
 
     function positionAt(indexData, globalIndex, preferEnd = false) {
@@ -1282,46 +1288,59 @@
 
     function goNext() {
         refreshSearch(false);
-
+    
         if (!matches.length) {
             showToast('没有找到匹配文本');
             return;
         }
-
-        currentIndex = (currentIndex + 1) % matches.length;
-
+    
+        if (pendingNextIndexAfterReplace !== null) {
+            currentIndex = Math.max(
+                0,
+                Math.min(pendingNextIndexAfterReplace, matches.length - 1)
+            );
+    
+            pendingNextIndexAfterReplace = null;
+        } else {
+            currentIndex = (currentIndex + 1) % matches.length;
+        }
+    
         const match = matches[currentIndex];
-
+    
         if (!selectPMRange(match)) {
             showToast('无法定位此处文本');
             return;
         }
-
+    
         updateStatus();
     }
+
 
 
     function goPrev() {
+        pendingNextIndexAfterReplace = null;
+    
         refreshSearch(false);
-
+    
         if (!matches.length) {
             showToast('没有找到匹配文本');
             return;
         }
-
+    
         currentIndex = currentIndex <= 0
             ? matches.length - 1
-        : currentIndex - 1;
-
+            : currentIndex - 1;
+    
         const match = matches[currentIndex];
-
+    
         if (!selectPMRange(match)) {
             showToast('无法定位此处文本');
             return;
         }
-
+    
         updateStatus();
     }
+
 
     function getReplacementHTMLForPM(match) {
         if (!replaceBox) return '';
@@ -2062,56 +2081,154 @@ function createReplacementInlineNodes(match) {
         }
     }
 
+    function pmInlineNodesToPlainText(nodes) {
+        let text = '';
+    
+        for (const node of nodes || []) {
+            if (!node) continue;
+    
+            if (node.isText) {
+                text += node.text || '';
+                continue;
+            }
+    
+            if (node.type && node.type.name === 'hardBreak') {
+                text += '\n';
+                continue;
+            }
+    
+            if (typeof node.textContent === 'string') {
+                text += node.textContent;
+            }
+        }
+    
+        return text;
+    }
+    
+    function getReplacementPlainTextForCompare(match) {
+        try {
+            const nodes = createReplacementInlineNodes(match);
+            return pmInlineNodesToPlainText(nodes).replace(/\n+$/g, '');
+        } catch (e) {
+            return String(
+                replaceBox ? (replaceBox.innerText || replaceBox.textContent || '') : ''
+            ).replace(/\n+$/g, '');
+        }
+    }
+
+
     function replaceCurrent() {
         refreshSearch(false);
-
+    
         if (!searchInput || !searchInput.value) {
             showToast('请先输入搜索文本');
             return;
         }
-
+    
         if (!matches.length) {
             showToast('没有找到匹配文本');
             return;
         }
-
+    
         if (currentIndex < 0) {
             currentIndex = 0;
         }
-
+    
+        const oldIndex = currentIndex;
+        const oldSearchText = searchInput.value;
+    
         const match = matches[currentIndex];
         const view = match.view;
-
+    
         const actualText = getPMTextBetween(view, match.from, match.to);
-
+    
         if (
             normalizeTextForSearch(actualText) !==
-            normalizeTextForSearch(searchInput.value)
+            normalizeTextForSearch(oldSearchText)
         ) {
             showToast('此处文本已变化，请重新搜索');
             refreshSearch(true);
             return;
         }
-
+    
+        // 判断这次替换是否只是修改格式，而没有修改纯文本
+        const replacementPlainText = getReplacementPlainTextForCompare(match);
+    
+        const isFormatOnlyReplace =
+            normalizeTextForSearch(replacementPlainText) ===
+            normalizeTextForSearch(oldSearchText);
+    
         const ok = replacePMMatch(match);
-
+    
         if (!ok) {
             alert('有 1 处文本未能替换，可能是不可替换文本。');
+            return;
         }
-
+    
         setTimeout(() => {
-            refreshSearch(true);
-
-            if (matches.length) {
-                currentIndex = Math.min(currentIndex, matches.length - 1);
+            /**
+             * 关键：
+             * 这里不能用 refreshSearch(true)。
+             * true 会把 currentIndex 重置成 -1，
+             * 导致界面显示 0/10，下一处又从第一处开始。
+             */
+            refreshSearch(false);
+    
+            if (!matches.length) {
+                currentIndex = -1;
+                pendingNextIndexAfterReplace = null;
                 updateStatus();
-
+                return;
+            }
+    
+            if (isFormatOnlyReplace) {
+                /**
+                 * 情况 1：
+                 * 替换后纯文本仍等于搜索文本。
+                 * 说明只是改格式。
+                 *
+                 * 例如原本 4/10：
+                 * 替换后仍然保持 4/10；
+                 * 再点下一处跳到 5/10。
+                 */
+                currentIndex = Math.min(oldIndex, matches.length - 1);
+                pendingNextIndexAfterReplace = null;
+    
+                updateStatus();
+    
                 if (currentIndex >= 0) {
                     selectPMRange(matches[currentIndex]);
                 }
+            } else {
+                /**
+                 * 情况 2：
+                 * 替换后纯文本变了。
+                 * 当前这一处不再匹配搜索词。
+                 *
+                 * 例如原本 4/10：
+                 * 替换后变成 9 处；
+                 * 原本第 5 处现在变成新的 4/9。
+                 *
+                 * 所以下次点“下一处”时，应该跳到 oldIndex。
+                 */
+                pendingNextIndexAfterReplace = Math.min(oldIndex, matches.length - 1);
+    
+                // 为了不回到 0，也不误跳过下一处，这里暂时停在上一项
+                currentIndex = oldIndex - 1;
+    
+                if (currentIndex >= matches.length) {
+                    currentIndex = matches.length - 1;
+                }
+    
+                if (currentIndex < -1) {
+                    currentIndex = -1;
+                }
+    
+                updateStatus();
             }
         }, 100);
     }
+
 
 
     async function replaceAll() {
